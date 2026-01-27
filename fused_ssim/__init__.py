@@ -11,6 +11,10 @@ elif torch.mps.is_available():
 elif hasattr(torch, 'xpu') and torch.xpu.is_available():
     from fused_ssim_xpu import fusedssim, fusedssim_backward
     is_3D_supported = False
+else:
+    # CPU backend
+    from fused_ssim_cpu import fusedssim, fusedssim_backward, fusedssim3d, fusedssim_backward3d
+    is_3D_supported = True
 
 
 allowed_padding = ["same", "valid"]

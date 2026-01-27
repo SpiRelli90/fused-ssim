@@ -7,16 +7,17 @@ This repository contains an efficient fully-fused implementation of [SSIM](https
 - Gaussians are symmetric in nature leading to fewer computations.
 - Single convolution pass for multiple statistics.
 
-As per the original SSIM paper, this implementation uses `11x11` sized convolution kernel. The weights for it have been hardcoded and this is another reason for it's speed. This implementation currently only supports **2D images** but with **variable number of channels** and **batch size**.
+As per the original SSIM paper, this implementation uses `11x11` sized convolution kernel. The weights for it have been hardcoded and this is another reason for it's speed. This implementation supports **2D images** and **3D volumes** with **variable number of channels** and **batch size**.
 
 ## Hardware Compatibility
 
-Thanks to the [contributors](#acknowledgements), this implementation supports the following GPU architectures:
+Thanks to the [contributors](#acknowledgements), this implementation supports the following architectures:
 
 - **NVIDIA GPUs** (CUDA).
 - **AMD GPUs** (ROCm).
 - **Apple Silicon** (Metal Performance Shaders).
 - **Intel GPUs** (SYCL).
+- **CPU-only** (C++ implementation for systems without GPU).
 
 ## Software Compatibility
 
@@ -34,11 +35,11 @@ This project has been tested with:
 
 ### Prerequisites
 
-You must have PyTorch installed with the appropriate backend for your GPU before installing fused-ssim. The installation process requires the backend compilers to be available.
+You must have PyTorch installed before installing fused-ssim. For GPU acceleration, the appropriate backend compilers must be available. For CPU-only systems, a C++ compiler is sufficient.
 
 ### Step 1: Install PyTorch with Correct Backend
 
-Choose the installation method based on your GPU:
+Choose the installation method based on your hardware:
 
 #### NVIDIA CUDA
 
@@ -89,6 +90,18 @@ Verify Intel SYCL compiler is available:
 ```bash
 icpx --version
 ```
+
+#### CPU-only
+
+For systems without GPU support, install PyTorch CPU version:
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+```
+
+The CPU implementation will be automatically selected when no GPU is available. Note that the CPU implementation supports both 2D and 3D SSIM, but will be significantly slower than GPU-accelerated versions.
+
+**Windows with MSVC**: The CPU backend is compatible with Windows and MSVC compiler using C++23 standard (`/std:c++latest`). Ensure you have Visual Studio 2022 or newer with C++ build tools installed.
 
 <details>
 <summary>Additional Intel XPU Build Instructions</summary>
@@ -198,9 +211,9 @@ with torch.no_grad():
 
 ## Constraints
 - Currently, only one of the images is allowed to be differentiable i.e. only the first image can be `nn.Parameter`.
-- Limited to 2D images.
 - Images must be normalized to range `[0, 1]`.
-- Standard `11x11` convolutions supported.
+- Standard `11x11` (2D) or `11x11x11` (3D) convolutions supported.
+- 3D SSIM is supported on CUDA and CPU backends (not available on MPS or Intel SYCL yet).
 
 ## Performance
 This implementation is 5-8x faster than the previous fastest (to the best of my knowledge) differentiable SSIM implementation [pytorch-msssim](https://github.com/VainF/pytorch-msssim).
