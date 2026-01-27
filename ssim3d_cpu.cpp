@@ -4,6 +4,13 @@
 #include <algorithm>
 #include <vector>
 
+// MSVC-specific pragmas for Windows compatibility
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4244)  // Conversion from double to float
+#pragma warning(disable: 4267)  // Conversion from size_t to int
+#endif
+
 // ------------------------------------------
 // Gaussian Coefficients (11x11x11 kernel)
 // ------------------------------------------
@@ -307,3 +314,8 @@ fusedssim_backward3d(
     
     return dL_dimg1;
 }
+
+// Restore MSVC warnings
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif

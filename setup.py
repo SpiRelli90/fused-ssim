@@ -99,7 +99,18 @@ def configure_xpu():
 def configure_cpu():
     """Configure CPU-only backend."""
     log("Compiling for CPU (no GPU detected).")
-    compiler_args = {"cxx": ["-O3", "-std=c++17", "-DFUSED_SSIM_CPU"]}
+    
+    # Detect if we're on Windows with MSVC
+    import platform
+    is_windows = platform.system() == "Windows"
+    
+    if is_windows:
+        # MSVC compiler flags for Windows with C++23
+        compiler_args = {"cxx": ["/O2", "/std:c++latest", "/DFUSED_SSIM_CPU"]}
+    else:
+        # GCC/Clang compiler flags for Unix-like systems with C++23
+        compiler_args = {"cxx": ["-O3", "-std=c++23", "-DFUSED_SSIM_CPU"]}
+    
     link_args = []
     detected_arch = "CPU (no GPU acceleration)"
     return CppExtension, ["ssim_cpu.cpp", "ssim3d_cpu.cpp", "ext.cpp"], "fused_ssim_cpu", compiler_args, link_args, detected_arch

@@ -101,6 +101,8 @@ pip install torch --index-url https://download.pytorch.org/whl/cpu
 
 The CPU implementation will be automatically selected when no GPU is available. Note that the CPU implementation supports both 2D and 3D SSIM, but will be significantly slower than GPU-accelerated versions.
 
+**Windows with MSVC**: The CPU backend is compatible with Windows and MSVC compiler using C++23 standard (`/std:c++latest`). Ensure you have Visual Studio 2022 or newer with C++ build tools installed.
+
 <details>
 <summary>Additional Intel XPU Build Instructions</summary>
 
