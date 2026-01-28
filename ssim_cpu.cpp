@@ -139,17 +139,23 @@ void fusedssimCPU(
                     
                     // Store partial derivatives for backward pass if training
                     if (train) {
-                        float denom_inv = 1.0f / (A * B);
+                        // Check if value was clamped - if so, derivatives are zero
+                        // Matches CUDA implementation (line 256)
+                        bool clamped = (ssim_val < -1.0f || ssim_val > 1.0f);
                         
-                        // ∂SSIM/∂μ₁
-                        float dssim_dmu1 = (2.0f * mu2 * D_ * B - C_ * D_ * 2.0f * mu1 * B) * denom_inv;
-                        dssim_dmu1 -= (C_ * D_ * A * 2.0f * mu1) * denom_inv / B;
+                        // ∂SSIM/∂μ₁ - matches CUDA implementation
+                        float dssim_dmu1 = clamped ? 0.0f : (
+                            (mu2 * 2.0f * D_) / (A * B)
+                            - (mu2 * 2.0f * C_) / (A * B)
+                            - (mu1 * 2.0f * C_ * D_) / (A * A * B)
+                            + (mu1 * 2.0f * C_ * D_) / (A * B * B)
+                        );
                         
-                        // ∂SSIM/∂σ₁²
-                        float dssim_dsigma1_sq = -(C_ * D_ * A) * denom_inv / (B * B);
+                        // ∂SSIM/∂σ₁² - matches CUDA implementation
+                        float dssim_dsigma1_sq = clamped ? 0.0f : (-C_ * D_) / (A * B * B);
                         
-                        // ∂SSIM/∂σ₁₂
-                        float dssim_dsigma12 = (2.0f * A * B) * denom_inv;
+                        // ∂SSIM/∂σ₁₂ - matches CUDA implementation
+                        float dssim_dsigma12 = clamped ? 0.0f : (2.0f * C_) / (A * B);
                         
                         dm_dmu1[idx] = dssim_dmu1;
                         dm_dsigma1_sq[idx] = dssim_dsigma1_sq;
@@ -163,6 +169,9 @@ void fusedssimCPU(
 
 // ------------------------------------------
 // CPU Backward Pass
+// Matches CUDA implementation approach:
+// Apply 2D Gaussian convolution on element-wise products of 
+// derivatives and dL_dmap, then accumulate with pixel values
 // ------------------------------------------
 void fusedssimBackwardCPU(
     int BS,
@@ -189,66 +198,48 @@ void fusedssimBackwardCPU(
     // Process each batch and channel
     for (int b = 0; b < BS; b++) {
         for (int c = 0; c < CH; c++) {
-            // For each output pixel, accumulate gradients to input
+            // Process each pixel
             for (int y = 0; y < H; y++) {
                 for (int x = 0; x < W; x++) {
-                    int out_idx = b * CH * H * W + c * H * W + y * W + x;
-                    float dL_dssim = dL_dmap[out_idx];
+                    int idx = b * CH * H * W + c * H * W + y * W + x;
                     
-                    if (dL_dssim == 0.0f) continue;
+                    // Get pixel values
+                    float p1 = img1[idx];
+                    float p2 = img2[idx];
                     
-                    float dssim_dmu1 = dm_dmu1[out_idx];
-                    float dssim_dsigma1_sq = dm_dsigma1_sq[out_idx];
-                    float dssim_dsigma12 = dm_dsigma12[out_idx];
+                    // Fuse the partial derivatives with dL_dmap before convolution
+                    // This matches the CUDA approach
                     
-                    // Propagate gradients through 2D convolution
+                    // Perform 2D convolution on the fused derivatives
+                    float sum0 = 0.0f;  // Conv(dm_dmu1 * dL_dmap)
+                    float sum1 = 0.0f;  // Conv(dm_dsigma1_sq * dL_dmap)
+                    float sum2 = 0.0f;  // Conv(dm_dsigma12 * dL_dmap)
+                    
                     for (int dy = -HALO; dy <= HALO; dy++) {
                         for (int dx = -HALO; dx <= HALO; dx++) {
-                            int in_y = y + dy;
-                            int in_x = x + dx;
-                            
-                            if (in_y < 0 || in_y >= H || in_x < 0 || in_x >= W) continue;
-                            
                             float weight = cGauss[dy + HALO] * cGauss[dx + HALO];
-                            float val2 = get_pix_value(img2, b, c, in_y, in_x, CH, H, W);
-                            float val1 = get_pix_value(img1, b, c, in_y, in_x, CH, H, W);
-                            float mu1 = 0.0f;
                             
-                            // Compute mu1 for this pixel (needed for variance gradient)
-                            for (int ky = -HALO; ky <= HALO; ky++) {
-                                for (int kx = -HALO; kx <= HALO; kx++) {
-                                    float kw = cGauss[ky + HALO] * cGauss[kx + HALO];
-                                    float kval = get_pix_value(img1, b, c, in_y + ky, in_x + kx, CH, H, W);
-                                    mu1 += kw * kval;
-                                }
+                            int ky = y + dy;
+                            int kx = x + dx;
+                            
+                            if (ky >= 0 && ky < H && kx >= 0 && kx < W) {
+                                int k_idx = b * CH * H * W + c * H * W + ky * W + kx;
+                                
+                                float chain = dL_dmap[k_idx];
+                                float vmu = dm_dmu1[k_idx];
+                                float vs1 = dm_dsigma1_sq[k_idx];
+                                float vs12 = dm_dsigma12[k_idx];
+                                
+                                sum0 += weight * vmu * chain;
+                                sum1 += weight * vs1 * chain;
+                                sum2 += weight * vs12 * chain;
                             }
-                            
-                            // ∂μ₁/∂img1 = weight
-                            float dmu1_dimg1 = weight;
-                            
-                            // ∂σ₁²/∂img1 = 2 * weight * (img1 - μ₁)
-                            float dsigma1_sq_dimg1 = 2.0f * weight * (val1 - mu1);
-                            
-                            // ∂σ₁₂/∂img1 = weight * (img2 - μ₂)
-                            // We need mu2 for accurate gradient
-                            float mu2 = 0.0f;
-                            for (int ky = -HALO; ky <= HALO; ky++) {
-                                for (int kx = -HALO; kx <= HALO; kx++) {
-                                    float kw = cGauss[ky + HALO] * cGauss[kx + HALO];
-                                    float kval = get_pix_value(img2, b, c, in_y + ky, in_x + kx, CH, H, W);
-                                    mu2 += kw * kval;
-                                }
-                            }
-                            float dsigma12_dimg1 = weight * (val2 - mu2);
-                            
-                            int in_idx = b * CH * H * W + c * H * W + in_y * W + in_x;
-                            dL_dimg1[in_idx] += dL_dssim * (
-                                dssim_dmu1 * dmu1_dimg1 +
-                                dssim_dsigma1_sq * dsigma1_sq_dimg1 +
-                                dssim_dsigma12 * dsigma12_dimg1
-                            );
                         }
                     }
+                    
+                    // Final gradient accumulation - matches CUDA line 422
+                    float dL_dpix = sum0 + (2.0f * p1) * sum1 + p2 * sum2;
+                    dL_dimg1[idx] = dL_dpix;
                 }
             }
         }
