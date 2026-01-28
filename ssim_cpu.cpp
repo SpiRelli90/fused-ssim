@@ -140,7 +140,8 @@ void fusedssimCPU(
                     // Store partial derivatives for backward pass if training
                     if (train) {
                         // Check if value was clamped - if so, derivatives are zero
-                        bool clamped = (ssim_val <= -1.0f || ssim_val >= 1.0f);
+                        // Matches CUDA implementation (line 256)
+                        bool clamped = (ssim_val < -1.0f || ssim_val > 1.0f);
                         
                         // ∂SSIM/∂μ₁ - matches CUDA implementation
                         float dssim_dmu1 = clamped ? 0.0f : (
@@ -169,7 +170,8 @@ void fusedssimCPU(
 // ------------------------------------------
 // CPU Backward Pass
 // Matches CUDA implementation approach:
-// Convolve the fused derivatives and accumulate with pixel values
+// Apply 2D Gaussian convolution on element-wise products of 
+// derivatives and dL_dmap, then accumulate with pixel values
 // ------------------------------------------
 void fusedssimBackwardCPU(
     int BS,
